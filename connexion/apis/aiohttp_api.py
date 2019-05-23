@@ -6,13 +6,14 @@ from urllib.parse import parse_qs
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
-from aiohttp.web_exceptions import HTTPNotFound, HTTPPermanentRedirect
+from aiohttp.web_exceptions import HTTPNotFound, HTTPPermanentRedirect, ProblemException
 from aiohttp.web_middlewares import normalize_path_middleware
 from connexion.apis.abstract import AbstractAPI
 from connexion.exceptions import OAuthProblem, OAuthScopeProblem
 from connexion.handlers import AuthErrorHandler
 from connexion.lifecycle import ConnexionRequest, ConnexionResponse
 from connexion.utils import Jsonifier, is_json_mimetype, yamldumper
+from connexion.problem import problem_from_object
 
 try:
     import ujson as json
@@ -27,7 +28,7 @@ logger = logging.getLogger('connexion.apis.aiohttp_api')
 
 @web.middleware
 @asyncio.coroutine
-def oauth_problem_middleware(request, handler):
+def generic_problem_middleware(request, handler):
     try:
         response = yield from handler(request)
     except (OAuthProblem, OAuthScopeProblem) as oauth_error:
@@ -35,6 +36,13 @@ def oauth_problem_middleware(request, handler):
             status=oauth_error.code,
             body=json.dumps(oauth_error.description).encode(),
             content_type='application/problem+json'
+        )
+    except ProblemException as prob_error:
+        problem_response = problem_from_object(prob_error)
+        return web.Response(
+            status=problem_response.status_code,
+            body=json.dumps(problem_response.body).encode(),
+            content_type=problem_response.content_type
         )
     return response
 
@@ -51,7 +59,7 @@ class AioHttpApi(AbstractAPI):
         )
         self.subapp = web.Application(
             middlewares=[
-                oauth_problem_middleware,
+                generic_problem_middleware,
                 trailing_slash_redirect
             ]
         )
